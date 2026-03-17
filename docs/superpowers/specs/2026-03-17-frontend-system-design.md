@@ -40,47 +40,59 @@ frontend/src/
 │   │   └── register/page.tsx
 │   ├── (dashboard)/
 │   │   ├── layout.tsx
-│   │   ├── error.tsx
+│   │   ├── error.tsx             # catches unhandled errors in this segment
+│   │   ├── not-found.tsx         # 404 for this segment
 │   │   ├── loading.tsx
-│   │   ├── page.tsx              # redirects to /projects
+│   │   ├── page.tsx              # calls redirect('/projects') from next/navigation
 │   │   ├── projects/
 │   │   │   ├── page.tsx
 │   │   │   ├── error.tsx
 │   │   │   └── [id]/page.tsx
 │   │   └── tasks/
 │   │       └── [id]/page.tsx
-│   └── layout.tsx
+│   ├── layout.tsx                # mounts <Providers> — root layout
+│   └── not-found.tsx             # root-level 404, covers (auth) and any unmatched route
 │
 ├── domains/                      # Business domains — the core of the architecture
 │   ├── auth/
 │   │   ├── components/           # LoginForm, RegisterForm
-│   │   ├── hooks/                # useLogin, useRegister, useCurrentUser
-│   │   ├── store.ts              # Zustand: session UI state (if any)
-│   │   ├── api.ts                # React Query hooks for auth endpoints
+│   │   ├── hooks/                # pure React hooks with no API calls: useAuthRedirect
+│   │   ├── store.ts              # Zustand: auth-specific UI state (if any)
+│   │   ├── api.ts                # React Query hooks: useCurrentUserQuery, useLoginMutation
 │   │   └── types.ts
 │   ├── tasks/
-│   │   ├── components/           # TaskCard, TaskList, TaskForm, TaskDetail
-│   │   ├── hooks/                # useTasks, useTask, useCreateTask, etc.
-│   │   ├── api.ts                # React Query: useTasksQuery, useCreateTaskMutation
+│   │   ├── components/           # TaskCard, TaskList, TaskForm, TaskDetail, TaskDetailActions
+│   │   ├── hooks/                # pure React hooks: useTaskFilters, useTaskSort
+│   │   ├── api.ts                # React Query hooks: useTasksQuery, useCreateTaskMutation
 │   │   └── types.ts
 │   └── projects/
 │       ├── components/           # ProjectCard, ProjectBoard, ProjectSidebar
-│       ├── hooks/
-│       ├── api.ts
+│       ├── hooks/                # pure React hooks with no API calls
+│       ├── api.ts                # React Query hooks: useProjectsQuery, useProjectQuery
 │       └── types.ts
 │
 ├── shared/                       # No domain knowledge — purely reusable
 │   ├── components/               # Button, Input, Modal, Spinner, Badge, Card
 │   ├── hooks/                    # useDebounce, useLocalStorage, usePagination
-│   ├── lib/                      # queryClient.ts, api instance
+│   ├── lib/
+│   │   ├── queryClient.ts        # QueryClient singleton with global error config
+│   │   ├── Providers.tsx         # 'use client' — mounts QueryClientProvider + ZustandProvider
+│   │   ├── api.server.ts         # server-side api-client factory (reads cookies)
+│   │   └── api.client.ts         # client-side api-client singleton (reads localStorage/cookie)
 │   └── types/                    # Pagination, ApiResponse, etc.
 │
-└── store/                        # Global Zustand store
-    ├── ui.ts                     # sidebar open, active modal, active task
-    └── index.ts                  # combine and export slices
+└── store/                        # Global Zustand store — layout-level UI state only
+    ├── ui.ts                     # sidebarOpen, activeModal — shared across domains
+    └── index.ts                  # exports all slices (each is a separate create() call)
 ```
 
+**`api.ts` vs `hooks/` distinction:** Every domain has both:
+- `api.ts` — contains only React Query hooks (`useQuery`, `useMutation`). These are the only files that call the API.
+- `hooks/` — contains pure React hooks with no API calls. Examples: `useTaskFilters` (derives a filtered list from local state), `useTaskSort` (sorts a pre-fetched list by a field). If a hook calls `useQuery` or `useMutation`, it belongs in `api.ts`, not `hooks/`.
+
 **Boundary rule:** A domain may import from `shared/` but never from another domain. Cross-domain communication happens through the Zustand store or URL state. Pages in `app/` are the only place where domain components are composed together.
+
+**Global vs. domain-level Zustand:** Layout-level UI state shared across domains (sidebar, active modal) lives in `store/ui.ts`. Domain-specific UI state not shared across domains (e.g., an auth-specific redirect flag) lives in `domains/[domain]/store.ts`. When in doubt, start in `store/ui.ts` and move to a domain store only if it becomes clearly domain-specific.
 
 ---
 
@@ -95,18 +107,60 @@ A component becomes a Client Component when it needs:
 - React Query hooks (which rely on context)
 - Zustand store access
 
+### Provider setup
+
+`QueryClientProvider` (and any other context providers) must be mounted inside a Client Component because providers use React context. Create `shared/lib/Providers.tsx`:
+
+```tsx
+// shared/lib/Providers.tsx
+'use client';
+
+import { useState } from 'react';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { makeQueryClient } from './queryClient';
+
+export function Providers({ children }: { children: React.ReactNode }) {
+  // Use useState so each browser session gets its own QueryClient instance.
+  // Do NOT instantiate QueryClient at module level here — Next.js can share
+  // module-level singletons across requests on the server.
+  const [queryClient] = useState(() => makeQueryClient());
+  return (
+    <QueryClientProvider client={queryClient}>
+      {children}
+    </QueryClientProvider>
+  );
+}
+```
+
+Mount it in the root layout (a Server Component can render a Client Component child):
+
+```tsx
+// app/layout.tsx
+import { Providers } from '@/shared/lib/Providers';
+
+export default function RootLayout({ children }) {
+  return (
+    <html>
+      <body>
+        <Providers>{children}</Providers>
+      </body>
+    </html>
+  );
+}
+```
+
 ### Rendering layers
 
 ```
 app/(dashboard)/projects/[id]/page.tsx     ← Server Component
-│   Fetches project data via api-client (async/await)
-│   Passes data as props to domain components
+│   Fetches project + tasks server-side
+│   Passes resolved data as props to domain components
 │
 ├── domains/projects/components/ProjectBoard.tsx   ← Server Component
 │   Renders layout, receives task list as props
 │
 ├── domains/tasks/components/TaskList.tsx          ← Server Component
-│   Maps tasks → TaskCard
+│   Receives Task[] as props, maps → TaskCard
 │
 └── domains/tasks/components/TaskCard.tsx          ← Client Component ('use client')
     Needs onClick, hover state, drag interactions
@@ -116,12 +170,70 @@ app/(dashboard)/projects/[id]/page.tsx     ← Server Component
 
 | Layer | Who fetches | How |
 |---|---|---|
-| Page (`app/`) | Server Component | `async/await` with `api-client` directly |
-| Mutations | Client Component | React Query `useMutation` |
-| Real-time / optimistic UI | Client Component | React Query `useQuery` with invalidation |
+| Page (`app/`) | Server Component | `async/await` with `api.server.ts` factory |
+| Mutations | Client Component | React Query `useMutation` via `api.ts` hooks |
+| Refetch after mutation | Client Component | React Query `invalidateQueries` |
 | Global UI state | Client Component | Zustand store |
 
-Server Components eliminate client-side data waterfalls. Pages arrive with initial data pre-rendered. Client Components handle interactivity after hydration.
+Server Components fetch the full initial data and pass it as props. Client Components use React Query only for mutations and post-mutation refetches — not for the initial page load. This prevents double-fetching.
+
+> **Note on React Query hydration:** The `prefetchQuery` / `dehydrate` / `HydrationBoundary` pattern (seeding the client cache with server-fetched data) is intentionally deferred. For the current scope, Server Components pass data as props and Client Components refetch after mutations via `invalidateQueries`. This is sufficient for core features and simpler to reason about.
+
+### Server-side API client
+
+The `api-client` package requires a `getToken` callback. In Server Components, the token comes from request cookies, not `localStorage`.
+
+```ts
+// shared/lib/api.server.ts
+import { createApiClient } from '@task-management/api-client';
+import { cookies } from 'next/headers';
+
+export function createServerApiClient() {
+  const cookieStore = cookies();
+  const token = cookieStore.get('auth-token')?.value ?? null;
+  return createApiClient({
+    baseURL: process.env.API_URL,
+    getToken: () => token,
+  });
+}
+```
+
+Usage in a Server Component page:
+
+```ts
+// app/(dashboard)/projects/[id]/page.tsx
+import { createServerApiClient } from '@/shared/lib/api.server';
+
+export default async function ProjectPage({ params }) {
+  const api = createServerApiClient();
+  const [project, tasks] = await Promise.all([
+    api.get(`/projects/${params.id}`),
+    api.get(`/projects/${params.id}/tasks`),
+  ]);
+  return <ProjectBoard project={project} tasks={tasks} />;
+}
+```
+
+A new `api` instance is created per request — this is intentional. Never use a singleton `api` instance on the server because the token differs per request.
+
+### Client-side API client
+
+```ts
+// shared/lib/api.client.ts
+// 'use client' — never import this file in a Server Component. Use api.server.ts instead.
+'use client';
+import { createApiClient } from '@task-management/api-client';
+
+export const api = createApiClient({
+  baseURL: process.env.NEXT_PUBLIC_API_URL,
+  getToken: () => document.cookie // or read from cookie utility
+    .split('; ')
+    .find(row => row.startsWith('auth-token='))
+    ?.split('=')[1] ?? null,
+});
+```
+
+This singleton is safe for client-side use because it runs in the browser where each user has their own session.
 
 ---
 
@@ -131,52 +243,73 @@ Two tools with strictly separated responsibilities.
 
 ### React Query — server state
 
-All data that originates from or is persisted to the API goes through React Query.
+All data that originates from or is persisted to the API goes through React Query hooks in `api.ts`.
 
 ```ts
 // domains/tasks/api.ts
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { api } from '@/shared/lib/api.client';
+
 export const useTasksQuery = (projectId: string) =>
   useQuery({
     queryKey: ['tasks', projectId],
-    queryFn: () => api.getTasks(projectId),
+    queryFn: () => api.get(`/projects/${projectId}/tasks`),
   });
 
-export const useCreateTaskMutation = () =>
-  useMutation({
-    mutationFn: api.createTask,
+export const useCreateTaskMutation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: CreateTaskInput) => api.post('/tasks', data),
     onSuccess: (_, { projectId }) =>
       queryClient.invalidateQueries({ queryKey: ['tasks', projectId] }),
   });
+};
 ```
 
 Query keys are cache identifiers — treat them as a contract. Invalidating `['tasks', projectId]` triggers a refetch everywhere that key is used.
 
 ### Zustand — UI state
 
-Only state with no server equivalent lives in Zustand.
+Only state with no server equivalent lives in Zustand. Each slice is a separate `create()` call.
 
 ```ts
 // store/ui.ts
+import { create } from 'zustand';
+
 interface UIStore {
   sidebarOpen: boolean;
   activeTaskId: string | null;
   toggleSidebar: () => void;
   setActiveTask: (id: string | null) => void;
 }
+
+export const useUIStore = create<UIStore>((set) => ({
+  sidebarOpen: true,
+  activeTaskId: null,
+  toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
+  setActiveTask: (id) => set({ activeTaskId: id }),
+}));
+```
+
+`store/index.ts` re-exports all slice hooks — it does not combine them (Zustand has no combineReducers):
+
+```ts
+// store/index.ts
+export { useUIStore } from './ui';
 ```
 
 ### Decision rule
 
 | Question | Use |
 |---|---|
-| Does this data come from or go to the API? | React Query |
+| Does this data come from or go to the API? | React Query (`api.ts`) |
 | Would refreshing the page reset this state? | Zustand |
 | Is this a loading/error state for a request? | React Query (built-in) |
 | Is this UI-only (open/closed, selected)? | Zustand |
 
 ### Auth
 
-The session token is stored in an httpOnly cookie managed by the server. `useCurrentUser` is a React Query hook — the user object comes from the API. Zustand does not store auth data.
+The session token is stored in an httpOnly cookie managed by the server. `useCurrentUserQuery` is a React Query hook — the user object comes from the API. Zustand does not store auth data.
 
 ---
 
@@ -204,27 +337,63 @@ Composed from Tier 1. Contain business logic and domain types. Know about React 
 
 ```
 domains/tasks/components/
-├── TaskCard.tsx      # 'use client' — clickable, shows badge, title, assignee
-├── TaskList.tsx      # Server Component — maps tasks → TaskCard
-├── TaskForm.tsx      # 'use client' — form with validation, calls useMutation
-└── TaskDetail.tsx    # Server Component — full task view, edit opens TaskForm modal
+├── TaskCard.tsx          # 'use client' — clickable, shows badge, title, assignee
+├── TaskList.tsx          # Server Component — receives Task[] as prop, maps → TaskCard
+├── TaskForm.tsx          # 'use client' — form with validation, calls useCreateTaskMutation
+├── TaskDetail.tsx        # Server Component — full task view, receives Task as prop
+└── TaskDetailActions.tsx # 'use client' — Edit button that opens TaskForm modal
 ```
 
-`TaskDetail` is a Server Component. Editing is triggered by a button that opens `TaskForm` as a Client Component modal — this keeps the expensive render on the server and limits the client bundle to interactive parts only.
+**`TaskDetail` pattern:** `TaskDetail` is a Server Component that renders the task data. It cannot have an `onClick` handler directly. The Edit button lives in `TaskDetailActions` (a small Client Component child). This keeps the expensive render on the server and limits the client bundle to the interactive button only:
+
+```tsx
+// domains/tasks/components/TaskDetail.tsx  (Server Component)
+import { TaskDetailActions } from './TaskDetailActions';
+
+export function TaskDetail({ task }: { task: Task }) {
+  return (
+    <div>
+      <h1>{task.title}</h1>
+      <p>{task.description}</p>
+      <TaskDetailActions taskId={task.id} /> {/* Client Component */}
+    </div>
+  );
+}
+
+// domains/tasks/components/TaskDetailActions.tsx
+'use client';
+export function TaskDetailActions({ taskId }: { taskId: string }) {
+  const [editOpen, setEditOpen] = useState(false);
+  return (
+    <>
+      <Button onClick={() => setEditOpen(true)}>Edit</Button>
+      {editOpen && <TaskForm taskId={taskId} onClose={() => setEditOpen(false)} />}
+    </>
+  );
+}
+```
 
 Domain components never import from sibling domains.
 
 ### Tier 3 — `app/` Pages (Composition Layer)
 
-Pages have one job: compose domain components into a layout. No logic, no state, no hooks.
+Pages have one job: fetch data and compose domain components into a layout. No local state, no hooks.
 
 ```tsx
 // app/(dashboard)/projects/[id]/page.tsx
+import { createServerApiClient } from '@/shared/lib/api.server';
+import { ProjectBoard } from '@/domains/projects/components/ProjectBoard';
+import { TaskList } from '@/domains/tasks/components/TaskList';
+
 export default async function ProjectPage({ params }) {
-  const project = await fetchProject(params.id);
+  const api = createServerApiClient();
+  const [project, tasks] = await Promise.all([
+    api.get(`/projects/${params.id}`),
+    api.get(`/projects/${params.id}/tasks`),
+  ]);
   return (
     <ProjectBoard project={project}>
-      <TaskList projectId={params.id} />
+      <TaskList tasks={tasks} />
     </ProjectBoard>
   );
 }
@@ -239,6 +408,7 @@ export default async function ProjectPage({ params }) {
 | `XxxDetail` | `TaskDetail` | Full view of a single entity |
 | `XxxList` | `TaskList` | Renders a collection |
 | `XxxBoard` | `ProjectBoard` | Layout/container for a domain view |
+| `XxxActions` | `TaskDetailActions` | Client Component holding interactive controls for a Server Component parent |
 
 ---
 
@@ -250,10 +420,10 @@ export default async function ProjectPage({ params }) {
 URL change
   → Next.js App Router
     → Server Component (page.tsx)
-      → fetch data via api-client
+      → fetch data via api.server.ts (createServerApiClient)
         → render domain components with data as props
           → Client Components hydrate
-            → React Query takes over for mutations & refetches
+            → React Query takes over for mutations & invalidation
               → Zustand updates UI state
 ```
 
@@ -262,12 +432,16 @@ One-way, top-down. No component reaches sideways to fetch data a parent already 
 ### Error boundaries — file-based (App Router)
 
 ```
-app/(dashboard)/
-├── error.tsx          ← catches unhandled errors in this route segment
-├── not-found.tsx      ← 404 for this segment
-└── projects/
-    ├── error.tsx      ← catches errors scoped to /projects only
+app/
+├── not-found.tsx              ← root-level 404, covers (auth) and all unmatched routes
+└── (dashboard)/
+    ├── error.tsx              ← catches unhandled errors in this route segment
+    ├── not-found.tsx          ← 404 for dashboard routes
+    └── projects/
+        └── error.tsx          ← catches errors scoped to /projects only
 ```
+
+Auth route group (`(auth)`) does not have its own `error.tsx` or `not-found.tsx` — it falls through to the root-level files.
 
 ### React Query error handling — domain level
 
@@ -284,18 +458,24 @@ React Query catches `ApiError` from the `api-client` package and exposes it type
 
 ```ts
 // shared/lib/queryClient.ts
-export const queryClient = new QueryClient({
+// Export a factory, not a singleton — instantiated per browser session in Providers.tsx.
+import { QueryClient } from '@tanstack/react-query';
+import { ApiError } from '@task-management/api-client';
+
+export function makeQueryClient() {
+  return new QueryClient({
   defaultOptions: {
     queries: { retry: 1, staleTime: 30_000 },
     mutations: {
       onError: (error) => {
         if (error instanceof ApiError && error.status === 401) {
           // redirect to login globally
+          window.location.href = '/login';
         }
       },
     },
-  },
-});
+  });
+}
 ```
 
 401 (unauthorized) is caught globally — not handled per mutation.
@@ -316,3 +496,4 @@ export const queryClient = new QueryClient({
 - File attachments — deferred
 - Notifications — deferred
 - React Native / mobile — covered by the `api-client` package design
+- React Query `prefetchQuery` / `dehydrate` / `HydrationBoundary` — deferred; pages pass server-fetched data as props for now
