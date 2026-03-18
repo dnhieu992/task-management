@@ -2,11 +2,13 @@
   "name": "task-management",
   "version": "0.1.0",
   "private": true,
+  "workspaces": ["packages/*"],
   "scripts": {
     "dev:fe": "npm run dev --prefix frontend",
     "dev:be": "npm run start:dev --prefix backend",
     "install:fe": "npm install --prefix frontend",
     "install:be": "npm install --prefix backend",
-    "install:all": "npm run install:fe && npm run install:be"
+    "install:all": "npm install && npm run install:fe && npm run install:be",
+    "build:packages": "npm run build --workspace=packages/api-client"
   }
 }

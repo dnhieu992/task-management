@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/dnhieu92/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.4/skills/writing-plans/**)"
+    ]
+  }
+}
