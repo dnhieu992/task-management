@@ -1298,7 +1298,9 @@ export class TasksService {
       relations: ['project', 'assignee', 'creator'],
     });
     if (!task) throw new NotFoundException('Task not found');
-    if (task.assigneeId !== userId) throw new ForbiddenException('You can only view tasks assigned to you');
+    if (task.assigneeId !== userId && task.creatorId !== userId) {
+      throw new ForbiddenException('You can only view tasks assigned to you or created by you');
+    }
     return task;
   }
 
