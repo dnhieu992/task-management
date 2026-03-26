@@ -27,7 +27,7 @@ export class Task {
   @Column({ default: 'medium' })
   priority: string;
 
-  @ManyToOne(() => Project, (project) => project.tasks)
+  @ManyToOne(() => Project, (project) => project.tasks, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'project_id' })
   project: Project;
 
@@ -43,6 +43,13 @@ export class Task {
 
   @Column({ name: 'assignee_id', nullable: true })
   assigneeId: string;
+
+  @ManyToOne(() => User, (user) => user.createdTasks)
+  @JoinColumn({ name: 'creator_id' })
+  creator: User;
+
+  @Column({ name: 'creator_id' })
+  creatorId: string;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
