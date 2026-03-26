@@ -117,7 +117,9 @@ User ──< ProjectMember >── Project
 - Task viewing filtered to `assigneeId = currentUser`
 - Task status updates (todo → inprogress → done) allowed by assignee
 - Task metadata edits (title, description, reassign) allowed by creator
+- If a user is both creator and assignee of a task, they can perform both status and metadata updates
 - Task deletion allowed by creator only
+- `DELETE /api/projects/:id` cascade-deletes all project members and tasks
 
 ## Frontend
 
