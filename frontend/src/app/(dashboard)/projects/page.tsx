@@ -1,3 +1,5 @@
+import ProjectList from '@/features/projects/components/ProjectList';
+
 export default function ProjectsPage() {
-  return <div>Projects — coming soon</div>;
+  return <ProjectList />;
 }
