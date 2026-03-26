@@ -1,3 +1,9 @@
-export default function ProjectDetailPage({ params }: { params: { id: string } }) {
-  return <div>Project {params.id} — coming soon</div>;
+'use client';
+
+import ProjectDetail from '@/features/projects/components/ProjectDetail';
+import { useParams } from 'next/navigation';
+
+export default function ProjectDetailPage() {
+  const params = useParams<{ id: string }>();
+  return <ProjectDetail projectId={params.id} />;
 }
