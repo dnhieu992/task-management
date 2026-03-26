@@ -1,32 +1,47 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body } from '@nestjs/common';
 import { TasksService } from './tasks.service';
+import { CreateTaskDto } from './dto/create-task.dto';
+import { UpdateTaskDto } from './dto/update-task.dto';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 
-@Controller('tasks')
+@Controller()
 export class TasksController {
   constructor(private readonly tasksService: TasksService) {}
 
-  @Get()
-  findAll(@Query('projectId') projectId?: string) {
-    return this.tasksService.findAll(projectId);
+  @Get('tasks')
+  findAllForUser(@CurrentUser() user: { id: string }) {
+    return this.tasksService.findAllForUser(user.id);
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.tasksService.findOne(id);
+  @Get('projects/:projectId/tasks')
+  findByProject(
+    @Param('projectId') projectId: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.tasksService.findByProject(projectId, user.id);
   }
 
-  @Post()
-  create(@Body() body: unknown) {
-    return this.tasksService.create(body);
+  @Get('tasks/:id')
+  findOne(@Param('id') id: string, @CurrentUser() user: { id: string }) {
+    return this.tasksService.findOne(id, user.id);
   }
 
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() body: unknown) {
-    return this.tasksService.update(id, body);
+  @Post('projects/:projectId/tasks')
+  create(
+    @Param('projectId') projectId: string,
+    @Body() dto: CreateTaskDto,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.tasksService.create(projectId, dto, user.id);
   }
 
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.tasksService.remove(id);
+  @Patch('tasks/:id')
+  update(@Param('id') id: string, @Body() dto: UpdateTaskDto, @CurrentUser() user: { id: string }) {
+    return this.tasksService.update(id, dto, user.id);
+  }
+
+  @Delete('tasks/:id')
+  remove(@Param('id') id: string, @CurrentUser() user: { id: string }) {
+    return this.tasksService.remove(id, user.id);
   }
 }
